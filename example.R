@@ -227,10 +227,27 @@ med_df <- do.call(rbind, lapply(split(fcst_df, list(fcst_df$type, fcst_df$target
              "q05" = qq[[2]], "q16" = qq[[3]], "q84" = qq[[5]], "q95" = qq[[6]], "top" = qq[[7]])
 }))
 
+# most recent released value (annotated in the chart)
+last_df <- hist_df[hist_df$date == max(hist_df$date),]
+
 # line from the last released value through the medians
-path_df <- rbind(hist_df[hist_df$date == max(hist_df$date),], med_df[, c("date","target","median")] |> setNames(c("date","target","value")))
+path_df <- rbind(last_df, med_df[, c("date","target","median")] |> setNames(c("date","target","value")))
 
 date_grid <- sort(unique(c(hist_df$date, med_df$date)))
+
+# label positions: above the line segments meeting at each date (evaluated within the label's half
+# width, about 35% of the distance to the next quarter) and above the violins; labels just below
+# zero are moved above the zero line
+line_df <- unique(rbind(hist_df, path_df))
+lab_df <- do.call(rbind, lapply(split(line_df, line_df$target), function(dd){
+  dd <- dd[order(dd$date),]
+  nb_next <- c(dd$value[-1], NA); nb_prev <- c(NA, dd$value[-nrow(dd)])
+  dd$y <- pmax(dd$value, dd$value + 0.35*(nb_next - dd$value), dd$value + 0.35*(nb_prev - dd$value), na.rm = TRUE)
+  dd$y <- pmax(dd$y, med_df$top[match(paste(dd$target, dd$date), paste(med_df$target, med_df$date))], na.rm = TRUE)
+  rng <- diff(range(c(dd$value, viol_df$value[viol_df$target == dd$target[1]], 0)))
+  dd$y[dd$y < 0 & dd$y > -0.15*rng] <- 0
+  dd[dd$date >= max(hist_df$date),]
+}))
 
 pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   geom_hline(yintercept = 0, linewidth = 0.3) +
@@ -241,7 +258,7 @@ pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.2) +
   geom_point(data = med_df, aes(x = date, y = median, shape = "Median"), fill = "white", size = 1.6) +
-  geom_text(data = med_df, aes(x = date, y = top, label = sprintf("%.2f", median)), vjust = -0.6, size = 3) +
+  geom_text(data = lab_df, aes(x = date, y = y, label = sprintf("%.2f", value)), vjust = -0.6, size = 3) +
 
   scale_linewidth_manual(values = c("68% credible set" = 1.6, "90% credible set" = 0.4), name = NULL) +
   scale_shape_manual(values = c("Median" = 21), name = NULL) +
