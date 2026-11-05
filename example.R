@@ -262,20 +262,28 @@ first_q <- !duplicated(floor(date_grid + 1e-8))
 date_labs[first_q] <- paste(floor(date_grid[first_q] + 1e-8), date_labs[first_q])
 
 # label of the last released value: above the line segments meeting at that date (evaluated within
-# the label's half width, about 35% of the distance to the next quarter); a label just below zero is
-# moved above the zero line. Medians and values at risk are labelled to the right of their marks
+# the label's half width, about 35% of the distance to the next quarter), or below them if the value
+# is a trough; a label above a value just below zero is moved above the zero line. Medians and
+# values at risk are labelled to the right of their marks
 line_df <- unique(rbind(hist_df, path_df))
 lab_df <- do.call(rbind, lapply(split(line_df, line_df$target), function(dd){
   dd <- dd[order(dd$date),]
   nb_next <- c(dd$value[-1], NA); nb_prev <- c(NA, dd$value[-nrow(dd)])
-  dd$y <- pmax(dd$value, dd$value + 0.35*(nb_next - dd$value), dd$value + 0.35*(nb_prev - dd$value), na.rm = TRUE)
+  dd$below <- !is.na(nb_next) & !is.na(nb_prev) & dd$value < nb_next & dd$value < nb_prev
+  y_up <- pmax(dd$value, dd$value + 0.35*(nb_next - dd$value), dd$value + 0.35*(nb_prev - dd$value), na.rm = TRUE)
+  y_dn <- pmin(dd$value, dd$value + 0.35*(nb_next - dd$value), dd$value + 0.35*(nb_prev - dd$value), na.rm = TRUE)
+  dd$y <- ifelse(dd$below, y_dn, y_up)
   rng <- diff(range(c(dd$value, viol_df$value[viol_df$target == dd$target[1]], 0)))
-  dd$y[dd$y < 0 & dd$y > -0.15*rng] <- 0
+  dd$y[!dd$below & dd$y < 0 & dd$y > -0.15*rng] <- 0
   dd[dd$date == max(hist_df$date),]
 }))
+
+# horizon of each predicted quarter (backcast, nowcast, forecast), printed below the axis labels
+hor_df <- unique(data.frame("date" = med_df$date, "label" = sub(" .*", "", med_df$type)))
 lab_style <- list(size = 2.7, fill = "white", alpha = 0.85, linewidth = 0,
                   label.padding = unit(0.08, "lines"), label.r = unit(0.05, "lines"))
 col_risk <- "#B22222"
+target_labs <- c("GDPC1" = "Real GDP growth (GDPC1)", "GDPCTPI" = "GDP deflator inflation (GDPCTPI)")
 
 pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   geom_hline(yintercept = 0, linewidth = 0.3) +
@@ -289,7 +297,8 @@ pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.2) +
   geom_point(data = med_df, aes(x = date, y = median, shape = "Median"), fill = "white", size = 1.6) +
-  do.call(geom_label, c(list(data = lab_df, mapping = aes(x = date, y = y, label = sprintf("%.2f", value)), vjust = -0.4), lab_style)) +
+  do.call(geom_label, c(list(data = lab_df, mapping = aes(x = date, y = y, label = sprintf("%.2f", value), vjust = ifelse(below, 1.4, -0.4))), lab_style)) +
+  geom_text(data = hor_df, aes(x = date, y = -Inf, label = label), vjust = 4.1, size = 2.4, fontface = "italic", colour = "grey45") +
   do.call(geom_label, c(list(data = med_df, mapping = aes(x = date + 0.025, y = median, label = sprintf("%.2f", median)), hjust = 0), lab_style)) +
   do.call(geom_label, c(list(data = risk_df, mapping = aes(x = date + 0.03, y = value, label = sprintf("%.2f", value)), hjust = 0, colour = col_risk), lab_style)) +
 
@@ -299,7 +308,8 @@ pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   guides(shape = guide_legend(order = 1), linewidth = guide_legend(order = 2), colour = guide_legend(order = 3)) +
   scale_x_continuous(breaks = date_grid, labels = date_labs, expand = expansion(add = c(0.08, 0.2))) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 10), expand = expansion(mult = c(0.05, 0.12))) +
-  facet_wrap(. ~ target, ncol = 2, scales = "free_y") +
+  facet_wrap(. ~ target, ncol = 2, scales = "free_y", labeller = as_labeller(target_labs)) +
+  coord_cartesian(clip = "off") +
 
   labs(x = NULL, y = "Annualized growth rate (%)") +
 
@@ -310,11 +320,12 @@ pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
         panel.spacing = unit(8, "pt"),
         axis.ticks = element_line(colour = "grey30", linewidth = 0.25),
         axis.ticks.length = unit(-2.5, "pt"),
-        axis.text.x = element_text(margin = margin(t = 4)),
+        axis.text.x = element_text(margin = margin(t = 4, b = 10)),
         axis.text.y = element_text(margin = margin(r = 4)),
+        axis.title.y = element_text(size = rel(0.8)),
         strip.text = element_text(colour = "black"))
 print(pp_hist)
 
 # dated chart in the folder charts/
 dir.create("charts", showWarnings = FALSE)
-ggsave(file.path("charts", paste0("example_", vintage, ".pdf")), pp_hist, width = 8, height = 3.6)
+ggsave(file.path("charts", paste0("example_", vintage, ".pdf")), pp_hist, width = 8, height = 3.1)
