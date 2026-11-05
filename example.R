@@ -214,59 +214,94 @@ fcst_df$target <- factor(fcst_df$target, levels = sl.target)
 fcst_df$date <- (run.ho + grid.hh/4)[as.integer(fcst_df$type)]
 fcst_df <- fcst_df[!is.na(fcst_df$value),]
 
-# draws within the 1-99 percentiles to avoid long tails of the violins
+# draws within the 1-99 percentiles to avoid long tails of the densities
 viol_df <- do.call(rbind, lapply(split(fcst_df, list(fcst_df$type, fcst_df$target), drop = TRUE), function(dd){
   qq <- quantile(dd$value, c(0.01, 0.99))
   dd[dd$value >= qq[1] & dd$value <= qq[2],]
 }))
 
-# medians, 68 and 90 percent credible sets and top of the violins (for the labels)
+# kernel densities drawn to the left of their target quarters; within a panel, the densities are
+# scaled by a common factor (equal areas) so that the widest reaches 0.15 (60% of a quarter)
+dens_df <- do.call(rbind, lapply(split(viol_df, list(viol_df$type, viol_df$target), drop = TRUE), function(dd){
+  kd <- density(dd$value, from = min(dd$value), to = max(dd$value), n = 256)
+  data.frame("target" = dd$target[1], "date" = dd$date[1], "y" = c(kd$x, rev(kd$x)), "w" = c(kd$y, 0*kd$y))
+}))
+dens_df$w <- 0.15 * dens_df$w / ave(dens_df$w, dens_df$target, FUN = max)
+
+# medians and 68 and 90 percent credible sets
 med_df <- do.call(rbind, lapply(split(fcst_df, list(fcst_df$type, fcst_df$target), drop = TRUE), function(dd){
-  qq <- quantile(dd$value, c(0.01, 0.05, 0.16, 0.5, 0.84, 0.95, 0.99))
-  data.frame("type" = dd$type[1], "target" = dd$target[1], "date" = dd$date[1], "median" = qq[[4]],
-             "q05" = qq[[2]], "q16" = qq[[3]], "q84" = qq[[5]], "q95" = qq[[6]], "top" = qq[[7]])
+  qq <- quantile(dd$value, c(0.05, 0.16, 0.5, 0.84, 0.95))
+  data.frame("type" = dd$type[1], "target" = dd$target[1], "date" = dd$date[1], "median" = qq[[3]],
+             "q05" = qq[[1]], "q16" = qq[[2]], "q84" = qq[[4]], "q95" = qq[[5]])
+}))
+
+# value at risk at the 5 percent level (ends of the 90 percent credible sets): downside risk to
+# growth, downside and upside risk to inflation
+risk.tails <- list("GDPC1" = "q05", "GDPCTPI" = c("q05", "q95"))
+risk_df <- do.call(rbind, lapply(names(risk.tails), function(j){
+  dd <- med_df[med_df$target == j,]
+  do.call(rbind, lapply(risk.tails[[j]], function(qq) data.frame("target" = dd$target, "date" = dd$date, "value" = dd[[qq]])))
 }))
 
 # most recent released value (annotated in the chart)
 last_df <- hist_df[hist_df$date == max(hist_df$date),]
 
-# line from the last released value through the medians
-path_df <- rbind(last_df, med_df[, c("date","target","median")] |> setNames(c("date","target","value")))
+# line from the last released value to the median of the first predicted quarter
+med_first <- med_df[med_df$date == min(med_df$date),]
+path_df <- rbind(last_df, med_first[, c("date","target","median")] |> setNames(c("date","target","value")))
+
+# vintage date on the quarterly axis: quarter start plus the elapsed share of the quarter
+q_start <- as.Date(as.yearqtr(vintage))
+vint_x <- as.numeric(as.yearqtr(vintage)) + 0.25*as.numeric(vintage - q_start)/as.numeric(as.Date(as.yearqtr(vintage), frac = 1) + 1 - q_start)
 
 date_grid <- sort(unique(c(hist_df$date, med_df$date)))
 
-# label positions: above the line segments meeting at each date (evaluated within the label's half
-# width, about 35% of the distance to the next quarter) and above the violins; labels just below
-# zero are moved above the zero line
+# axis labels: the year only at the first quarter shown of each year
+date_labs <- format(as.yearqtr(date_grid + 1e-8), "Q%q")
+first_q <- !duplicated(floor(date_grid + 1e-8))
+date_labs[first_q] <- paste(floor(date_grid[first_q] + 1e-8), date_labs[first_q])
+
+# label of the last released value: above the line segments meeting at that date (evaluated within
+# the label's half width, about 35% of the distance to the next quarter); a label just below zero is
+# moved above the zero line. Medians and values at risk are labelled to the right of their marks
 line_df <- unique(rbind(hist_df, path_df))
 lab_df <- do.call(rbind, lapply(split(line_df, line_df$target), function(dd){
   dd <- dd[order(dd$date),]
   nb_next <- c(dd$value[-1], NA); nb_prev <- c(NA, dd$value[-nrow(dd)])
   dd$y <- pmax(dd$value, dd$value + 0.35*(nb_next - dd$value), dd$value + 0.35*(nb_prev - dd$value), na.rm = TRUE)
-  dd$y <- pmax(dd$y, med_df$top[match(paste(dd$target, dd$date), paste(med_df$target, med_df$date))], na.rm = TRUE)
   rng <- diff(range(c(dd$value, viol_df$value[viol_df$target == dd$target[1]], 0)))
   dd$y[dd$y < 0 & dd$y > -0.15*rng] <- 0
-  dd[dd$date >= max(hist_df$date),]
+  dd[dd$date == max(hist_df$date),]
 }))
+lab_style <- list(size = 2.7, fill = "white", alpha = 0.85, linewidth = 0,
+                  label.padding = unit(0.08, "lines"), label.r = unit(0.05, "lines"))
+col_risk <- "#B22222"
 
 pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
   geom_hline(yintercept = 0, linewidth = 0.3) +
-  geom_violin(data = viol_df, aes(x = date, y = value, group = date), width = 0.18, fill = "grey85", colour = "grey30", linewidth = 0.25) +
+  geom_vline(xintercept = vint_x, linetype = "dotted", colour = "grey30", linewidth = 0.4) +
+  annotate("text", x = vint_x, y = Inf, label = paste0("Vintage ", vintage), hjust = 1.08, vjust = 1.6, size = 2.5, colour = "grey30") +
+  geom_polygon(data = dens_df, aes(x = date - w, y = y, group = date), fill = "grey85", colour = "grey30", linewidth = 0.25) +
   geom_linerange(data = med_df, aes(x = date, ymin = q05, ymax = q95, linewidth = "90% credible set"), inherit.aes = FALSE, colour = "grey30") +
   geom_linerange(data = med_df, aes(x = date, ymin = q16, ymax = q84, linewidth = "68% credible set"), inherit.aes = FALSE, colour = "grey30") +
+  geom_segment(data = risk_df, aes(x = date - 0.07, xend = date + 0.02, y = value, yend = value, colour = "Value at risk"), linewidth = 0.6) +
   geom_line(data = path_df, linetype = "dashed", linewidth = 0.4) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.2) +
   geom_point(data = med_df, aes(x = date, y = median, shape = "Median"), fill = "white", size = 1.6) +
-  geom_text(data = lab_df, aes(x = date, y = y, label = sprintf("%.2f", value)), vjust = -0.6, size = 3) +
+  do.call(geom_label, c(list(data = lab_df, mapping = aes(x = date, y = y, label = sprintf("%.2f", value)), vjust = -0.4), lab_style)) +
+  do.call(geom_label, c(list(data = med_df, mapping = aes(x = date + 0.025, y = median, label = sprintf("%.2f", median)), hjust = 0), lab_style)) +
+  do.call(geom_label, c(list(data = risk_df, mapping = aes(x = date + 0.03, y = value, label = sprintf("%.2f", value)), hjust = 0, colour = col_risk), lab_style)) +
 
   scale_linewidth_manual(values = c("68% credible set" = 1.6, "90% credible set" = 0.4), name = NULL) +
   scale_shape_manual(values = c("Median" = 21), name = NULL) +
-  scale_x_continuous(breaks = date_grid, labels = format(as.yearqtr(date_grid + 1e-8), "%Y Q%q")) +
+  scale_colour_manual(values = c("Value at risk" = col_risk), name = NULL) +
+  guides(shape = guide_legend(order = 1), linewidth = guide_legend(order = 2), colour = guide_legend(order = 3)) +
+  scale_x_continuous(breaks = date_grid, labels = date_labs, expand = expansion(add = c(0.08, 0.2))) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 10), expand = expansion(mult = c(0.05, 0.12))) +
-  facet_wrap(. ~ target, ncol = 1, scales = "free_y") +
+  facet_wrap(. ~ target, ncol = 2, scales = "free_y") +
 
-  xlab("") + ylab("Annualized growth rate (%)") +
+  labs(x = NULL, y = "Annualized growth rate (%)") +
 
   theme_minimal() +
   theme(legend.position = "bottom",
@@ -279,3 +314,7 @@ pp_hist <- ggplot(hist_df, aes(x = date, y = value)) +
         axis.text.y = element_text(margin = margin(r = 4)),
         strip.text = element_text(colour = "black"))
 print(pp_hist)
+
+# dated chart in the folder charts/
+dir.create("charts", showWarnings = FALSE)
+ggsave(file.path("charts", paste0("example_", vintage, ".pdf")), pp_hist, width = 8, height = 3.6)
