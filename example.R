@@ -196,7 +196,7 @@ for(hh in grid.hh){
   fcst.draws[[fcst.label]] <- fcst
 }
 
-print(lapply(fcst.out, round, digits = 2))
+# print(lapply(fcst.out, round, digits = 2))
 
 # ---------------------------------------------------------------------------------------------
 # released values of the targets over the past 4 quarters and the predictive densities

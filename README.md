@@ -25,7 +25,7 @@ Run `example.R` with the root of this repository as working directory:
 Rscript example.R
 ```
 
-The script downloads the monthly predictors and the quarterly targets as available on the vintage date (today by default) from ALFRED, so it needs an internet connection. It then estimates the model for the nowcast and the one-quarter-ahead forecast, adds a backcast if the previous quarter has not been released yet, prints a summary of the predictive distributions and plots them next to the latest released values, with the value at risk at the 5% level. The chart is saved as `charts/example_<vintage>.pdf`.
+The script downloads the monthly predictors and the quarterly targets as available on the vintage date (today by default) from ALFRED, so it needs an internet connection. It then estimates the model for the nowcast and the one-quarter-ahead forecast, adds a backcast if the previous quarter has not been released yet, and plots the predictive distributions next to the latest released values, with the value at risk at the 5% level. The chart is saved as `charts/example_<vintage>.pdf`.
 
 The settings at the top of the script select the vintage date, the MIDAS compression (`run.type`), the conditional mean (`run.model`), stochastic volatility (`run.sv`) and the number of MCMC draws. The defaults use a shorter chain than the paper.
 
